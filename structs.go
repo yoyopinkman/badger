@@ -56,25 +56,32 @@ type header struct {
 }
 
 const (
-	headerBufSize = 18
+	maxHeaderSize = 18
 )
 
-func (h header) Encode(out []byte) {
-	y.AssertTrue(len(out) >= headerBufSize)
-	binary.BigEndian.PutUint32(out[0:4], h.klen)
-	binary.BigEndian.PutUint32(out[4:8], h.vlen)
-	binary.BigEndian.PutUint64(out[8:16], h.expiresAt)
-	out[16] = h.meta
-	out[17] = h.userMeta
+func (h header) Encode(out []byte) uint16 {
+	index := 0
+	index += binary.PutUvarint(out[index:], uint64(h.klen))
+	index += binary.PutUvarint(out[index:], uint64(h.vlen))
+	index += binary.PutUvarint(out[index:], h.expiresAt)
+	out[index] = h.meta
+	out[index+1] = h.userMeta
+	return uint16(index + 1)
 }
 
 // Decodes h from buf.
 func (h *header) Decode(buf []byte) {
-	h.klen = binary.BigEndian.Uint32(buf[0:4])
-	h.vlen = binary.BigEndian.Uint32(buf[4:8])
-	h.expiresAt = binary.BigEndian.Uint64(buf[8:16])
-	h.meta = buf[16]
-	h.userMeta = buf[17]
+	klen, count := binary.Uvarint(buf[:])
+	h.klen = uint32(klen)
+	buf = buf[count:]
+	vlen, count := binary.Uvarint(buf[:])
+	h.vlen = uint32(vlen)
+	buf = buf[count:]
+	expiresAt, count := binary.Uvarint(buf[:])
+	h.expiresAt = uint64(expiresAt)
+	h.meta = buf[0]
+	h.userMeta = buf[1]
+
 }
 
 // Entry provides Key, Value, UserMeta and ExpiresAt. This struct can be used by
@@ -108,12 +115,16 @@ func encodeEntry(e *Entry, buf *bytes.Buffer) (int, error) {
 		userMeta:  e.UserMeta,
 	}
 
-	var headerEnc [headerBufSize]byte
-	h.Encode(headerEnc[:])
+	headerEnc := make([]byte, maxHeaderSize)
+	bytesWritten := h.Encode(headerEnc[:])
 
-	hash := crc32.New(y.CastagnoliCrcTable)
+	// Write header length
+	buf.Write([]byte{uint8(bytesWritten)})
 
+	// Trim headerEnc to contain only valid bytes
+	headerEnc = headerEnc[:bytesWritten]
 	buf.Write(headerEnc[:])
+	hash := crc32.New(y.CastagnoliCrcTable)
 	if _, err := hash.Write(headerEnc[:]); err != nil {
 		return 0, err
 	}
@@ -132,7 +143,7 @@ func encodeEntry(e *Entry, buf *bytes.Buffer) (int, error) {
 	binary.BigEndian.PutUint32(crcBuf[:], hash.Sum32())
 	buf.Write(crcBuf[:])
 
-	return len(headerEnc) + len(e.Key) + len(e.Value) + len(crcBuf), nil
+	return 1 + len(headerEnc) + len(e.Key) + len(e.Value) + len(crcBuf), nil
 }
 
 func (e Entry) print(prefix string) {

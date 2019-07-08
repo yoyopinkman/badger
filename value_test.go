@@ -17,6 +17,7 @@
 package badger
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -973,4 +974,19 @@ func TestValueLogTruncate(t *testing.T) {
 	// Max file ID would point to the last vlog file, which is fid=2 in this case
 	require.Equal(t, 2, int(db.vlog.maxFid))
 	require.NoError(t, db.Close())
+}
+
+func TestEntry(t *testing.T) {
+	var s safeRead
+	e := NewEntry([]byte("foo"), []byte("bar"))
+	buf := bytes.NewBuffer(nil)
+	_, err := encodeEntry(e, buf)
+	require.NoError(t, err)
+
+	ne, err := s.Entry(buf)
+
+	require.NoError(t, err)
+	require.Equal(t, e.meta, ne.meta, "meta mismatch")
+	require.Equal(t, e.UserMeta, ne.UserMeta, "usermeta mismatch")
+	require.Equal(t, e.ExpiresAt, ne.ExpiresAt, "expiresAt mismatch")
 }

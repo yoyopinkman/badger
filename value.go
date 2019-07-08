@@ -195,17 +195,22 @@ type safeRead struct {
 	recordOffset uint32
 }
 
-func (r *safeRead) Entry(reader *bufio.Reader) (*Entry, error) {
-	var hbuf [headerBufSize]byte
+func (r *safeRead) Entry(reader io.Reader) (*Entry, error) {
 	var err error
-
+	headerLen := make([]byte, 1)
+	if _, err = io.ReadFull(reader, headerLen); err != nil {
+		return nil, err
+	}
 	hash := crc32.New(y.CastagnoliCrcTable)
 	tee := io.TeeReader(reader, hash)
+
+	hlen := uint8(headerLen[0])
+	var h header
+	hbuf := make([]byte, hlen)
 	if _, err = io.ReadFull(tee, hbuf[:]); err != nil {
 		return nil, err
 	}
 
-	var h header
 	h.Decode(hbuf[:])
 	if h.klen > uint32(1<<16) { // Key length must be below uint16.
 		return nil, errTruncate
@@ -297,7 +302,7 @@ func (vlog *valueLog) iterate(lf *logFile, offset uint32, fn logEntry) (uint32, 
 		}
 
 		var vp valuePointer
-		vp.Len = uint32(headerBufSize + len(e.Key) + len(e.Value) + crc32.Size)
+		vp.Len = uint32(maxHeaderSize + len(e.Key) + len(e.Value) + crc32.Size)
 		read.recordOffset += vp.Len
 
 		vp.Offset = e.offset
@@ -1092,9 +1097,11 @@ func (vlog *valueLog) Read(vp valuePointer, s *y.Slice) ([]byte, func(), error) 
 	if err != nil {
 		return nil, cb, err
 	}
+	headerLen := uint8(buf[0])
+	buf = buf[1:]
 	var h header
 	h.Decode(buf)
-	n := uint32(headerBufSize) + h.klen
+	n := uint32(headerLen) + h.klen
 	return buf[n : n+h.vlen], cb, nil
 }
 
@@ -1118,7 +1125,7 @@ func (vlog *valueLog) readValueBytes(vp valuePointer, s *y.Slice) ([]byte, func(
 func valueBytesToEntry(buf []byte) (e Entry) {
 	var h header
 	h.Decode(buf)
-	n := uint32(headerBufSize)
+	n := uint32(maxHeaderSize)
 
 	e.Key = buf[n : n+h.klen]
 	n += h.klen

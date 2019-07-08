@@ -266,8 +266,14 @@ func (item *Item) ValueSize() int64 {
 	var vp valuePointer
 	vp.Decode(item.vptr)
 
+	// Read one byte to find the length of the header
+	hlen := make([]byte, 1)
+	item.db.vlog.filesLock.Lock()
+	vlogFile := item.db.vlog.filesMap[vp.Fid]
+	item.db.vlog.filesLock.Unlock()
+	vlogFile.fd.ReadAt(hlen, int64(vp.Offset))
 	klen := int64(len(item.key) + 8) // 8 bytes for timestamp.
-	return int64(vp.Len) - klen - headerBufSize - crc32.Size
+	return int64(vp.Len) - klen - int64(uint8(hlen[0])) - 1 - crc32.Size
 }
 
 // UserMeta returns the userMeta set by the user. Typically, this byte, optionally set by the user
